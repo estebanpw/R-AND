@@ -27,7 +27,9 @@ USAGE       Usage is described by calling ./CHROMEISTER --help
 
 uint64_t custom_kmer = 12; // Defined as external in structs.h
 
-void init_args(int argc, char ** av, FILE ** database, FILE ** query);
+void init_args(int argc, char ** av, FILE ** database);
+long double get_random_num_from_bytes(const unsigned char * eight_bytes);
+long double get_random_num_from_8_bytes(uint64_t eight_bytes);
 long double get_random_num(const unsigned char * word, uint64_t ** w_array, uint64_t * w_sizes);
 long double estimate_pi(uint64_t t_in_circle, uint64_t t_total);
 int is_within_circle(long double x1, long double x2);
@@ -40,10 +42,10 @@ int main(int argc, char ** av){
     uint64_t i, j;
 
     //query to read kmers from, database to find seeds
-    FILE * database = NULL, * query;
+    FILE * database = NULL;
     long double MY_PI = (long double) 3.14159265359;
     
-    init_args(argc, av, &database, &query);
+    init_args(argc, av, &database);
 
     
     //Variables to account for positions
@@ -70,6 +72,7 @@ int main(int argc, char ** av){
     uint64_t aprox_len_query = ftell(database);
     rewind(database);
     uint64_t a_hundreth = (aprox_len_query/100);
+    uint64_t a_thousandth = (aprox_len_query/1000);
     
     //To force reading from the buffer
     idx = READBUF + 1;
@@ -80,56 +83,6 @@ int main(int argc, char ** av){
     unsigned char * seq_vector_query = (unsigned char *) malloc(READBUF*sizeof(unsigned char));
     if(seq_vector_query == NULL) terror("Could not allocate memory for query vector");
 
-    uint64_t w_sizes[custom_kmer];
-    uint64_t ** w_array = (uint64_t **) calloc(custom_kmer, sizeof(uint64_t *));
-    if(w_array == NULL) terror("Could not allocate wide array");
-
-    for(i=0; i<custom_kmer; i++){
-        w_sizes[i] = powl(4, i+1);
-        w_array[i] = (uint64_t *) calloc(w_sizes[i], sizeof(uint64_t));
-        if(w_array[i] == NULL){ fprintf(stdout, "Container %" PRIu64 ":\n", i); terror("Could not allocate container"); }
-    }
-
-    c = buffered_fgetc(temp_seq_buffer, &idx, &r, database);
-    while((!feof(database) || (feof(database) && idx < r))){
-        if(c == '>'){
-            while(c != '\n') c = buffered_fgetc(temp_seq_buffer, &idx, &r, database);  //Skip ID
-            while(c != '>' && (!feof(database) || (feof(database) && idx < r))){ //Until next id
-                c = buffered_fgetc(temp_seq_buffer, &idx, &r, database);
-                c = toupper(c);
-                if(c == 'A' || c == 'C' || c == 'G' || c == 'T'){
-                    curr_kmer[word_size] = (unsigned char) c;
-                    if(word_size < custom_kmer) ++word_size;
-                    ++current_len;
-                    if(current_len % a_hundreth == 0){ 
-                        fprintf(stdout, "\r%"PRIu64"%%...", 1+100*current_len/aprox_len_query); 
-                        fflush(stdout);
-                    }
-                }else{ //It can be anything (including N, Y, X ...)
-                    if(c != '\n' && c != '>'){
-                        word_size = 0;
-                        ++current_len;
-                    } 
-                }
-                if(word_size == custom_kmer){
-                    // Processing
-                    for(j=0; j<custom_kmer; j++){
-                        uint64_t hash = hashOfWord(curr_kmer, j+1, 0);
-                        //fprintf(stdout, "at (%"PRIu64") generated hash %"PRIu64" for seq %s\n", j, hash, (char *)curr_kmer); getchar();
-                        w_array[j][hash]++;
-                    }
-		            // Overlapping
-                    memmove(&curr_kmer[0], &curr_kmer[1], custom_kmer-1);
-                    --word_size;
-                }
-            }
-            word_size = 0;   
-        }else{
-            c = buffered_fgetc(temp_seq_buffer, &idx, &r, database);    
-        }
-    }
-
-    fprintf(stdout, "[INFO] Rolling numbers.\n");
 
     //To force reading from the buffer
     idx = READBUF + 1;
@@ -137,25 +90,63 @@ int main(int argc, char ** av){
 
     uint64_t t_in_circle = 0, t_total = 0;
     long double x1, x2;
-    unsigned char have_one_already = FALSE;
+    unsigned char have_one_already = FALSE, random_init_completed = FALSE;
     current_len = 0;
     word_size = 0;
+    long double vAT = 0, vCG = 0;
+    long double G = 0, C = 0, A = 0, T = 0;
+    unsigned char curr_bytes[64];
+    uint64_t bytes_taken = 0;
+    uint64_t acum = 1;
+    srand(time(NULL));
+    uint64_t conv[256];
+    conv[(unsigned char) 'A'] = 89465;
+    conv[(unsigned char) 'C'] = 1265;
+    conv[(unsigned char) 'G'] = 987987465;
+    conv[(unsigned char) 'T'] = 2135364;
+    long double prev_pi = 0;
 
-    c = buffered_fgetc(temp_seq_buffer, &idx, &r, query);
-    while((!feof(query) || (feof(query) && idx < r))){
+    c = buffered_fgetc(temp_seq_buffer, &idx, &r, database);
+    while((!feof(database) || (feof(database) && idx < r))){
         if(c == '>'){
-            while(c != '\n') c = buffered_fgetc(temp_seq_buffer, &idx, &r, query);  //Skip ID
-            while( c != '>' && (!feof(query) || (feof(query) && idx < r))){ //Until next id
-                c = buffered_fgetc(temp_seq_buffer, &idx, &r, query);
+            while(c != '\n') c = buffered_fgetc(temp_seq_buffer, &idx, &r, database);  //Skip ID
+            while( c != '>' && (!feof(database) || (feof(database) && idx < r))){ //Until next id
+                c = buffered_fgetc(temp_seq_buffer, &idx, &r, database);
                 c = toupper(c);
                 if(c == 'A' || c == 'C' || c == 'G' || c == 'T'){
-                    curr_kmer[word_size] = (unsigned char) c;
+                    //curr_kmer[word_size] = (unsigned char) c;
                     if(word_size < custom_kmer) ++word_size;
                     ++current_len;
-                    if(current_len % a_hundreth == 0 && t_total > 0){ 
+
+                    if(1 == 1){ 
+
+                        //fprintf(stdout, "%d", (vAT >= 0));
+
+                        //curr_bytes[bytes_taken++] = (unsigned char) (vAT >= 0);
+                        
+                        //printf("%d\n", (rand() % (2)));
+                        //curr_bytes[bytes_taken++] = (rand() % (2));
+                        acum = conv[(unsigned char)c] + (conv[(unsigned char)c] * acum);
+                        //fprintf(stdout, "^AT = %d\n^CG = %d\n", (vAT >= 0), (vCG >= 0));
+                        //getchar();
+
+                        vAT = A - T;
+                        vCG = C - G;
+
+                        A = C = G = T = 0;
+                    }
+
+                    if(current_len % a_hundreth == 0 && current_len > 1){ 
                         //fprintf(stdout, "%"PRIu64"%%...\n", 1+100*current_len/aprox_len_query); 
+                        
+                        random_init_completed = TRUE;
+                        //fprintf(stdout, "A %Le\nT %Le\nC %Le\nG %Le------\n", A, T, C, G);
+                        
+                        fprintf(stdout, "PI var: %.17Le\n", estimate_pi(t_in_circle, t_total)-prev_pi);
                         fprintf(stdout, "PI estimation: %.17Le\n", estimate_pi(t_in_circle, t_total));
                         fprintf(stdout, "Real PI:       %.17Le\n", MY_PI);
+                        prev_pi = estimate_pi(t_in_circle, t_total);
+                        //getchar();
                         fflush(stdout);
                     }
                 }else{ //It can be anything (including N, Y, X ...)
@@ -164,41 +155,79 @@ int main(int argc, char ** av){
                         ++current_len;
                     } 
                 }
-                if(word_size == custom_kmer){
+                // Treat DNA chars here
+                switch(c){
+                    case 'A': ++A; break;
+                    case 'C': ++C; break;
+                    case 'G': ++G; break;
+                    case 'T': ++T; break;
+                }
+
+                
+
+
+                if(current_len > 64){
                     // Processing
                     if(have_one_already == FALSE){
-                        x1 = get_random_num(curr_kmer, w_array, w_sizes);
+                        //x1 = get_random_num(curr_kmer, w_array, w_sizes);
+                        x1 = get_random_num_from_8_bytes(acum);
+                        //printf("%Le\n", x1);
                         have_one_already = TRUE;
                     }else{
-                        x2 = get_random_num(curr_kmer, w_array, w_sizes);
+                        //x2 = get_random_num(curr_kmer, w_array, w_sizes);
+                        x2 = get_random_num_from_8_bytes(acum);
+                        //printf("%Le\n", x2);
                         if(is_within_circle(x1, x2) == 1) ++t_in_circle;
                         ++t_total;
                         have_one_already = FALSE;
                     }
+
+                    //printf(" t circle %"PRIu64" t total %"PRIu64"\n", t_in_circle, t_total);
                     
                     //fprintf(stdout, "Word %s gives %e\n", (char *) curr_kmer, v_rand);
                     //getchar();
 		            // Overlapping
+
+                    bytes_taken = 0;
+
                     memmove(&curr_kmer[0], &curr_kmer[1], custom_kmer-1);
                     --word_size;
                 }
             }
+            bytes_taken = 0;
             word_size = 0;   
         }else{
-            c = buffered_fgetc(temp_seq_buffer, &idx, &r, query);    
+            c = buffered_fgetc(temp_seq_buffer, &idx, &r, database);    
         }
     }
 
     fprintf(stdout, "PI estimation: %.17Le\n", estimate_pi(t_in_circle, t_total));
     fprintf(stdout, "Real PI:       %.17Le\n", MY_PI);
 
-
-    for(i=0; i<custom_kmer; i++){
-        free(w_array[i]);
-    }
-    free(w_array);
+    fclose(database);
     
     return 0;
+}
+
+long double get_random_num_from_bytes(const unsigned char * eight_bytes){
+    uint64_t i;
+    uint64_t v = 0, c;
+    for(i=0; i<64; i++){
+        c = (uint64_t) eight_bytes[i];
+        c = c << (63-i);
+        v += c;
+    }
+    
+    
+    //printf("---------->%"PRIu64"\n", v);
+    return (long double) ( (long double) v / (long double) ((uint64_t)0xFFFFFFFFFFFFFFFF));
+}
+
+long double get_random_num_from_8_bytes(uint64_t eight_bytes){
+      
+    
+    //printf("---------->%"PRIu64"\n", v);
+    return (long double) ( (long double) eight_bytes / (long double) ((uint64_t)0xFFFFFFFFFFFFFFFF));
 }
 
 long double get_random_num(const unsigned char * word, uint64_t ** w_array, uint64_t * w_sizes){
@@ -234,14 +263,14 @@ int is_within_circle(long double x1, long double x2){
 }
 
 
-void init_args(int argc, char ** av, FILE ** database, FILE ** query){
+void init_args(int argc, char ** av, FILE ** database){
 
 
     int pNum = 0;
     while(pNum < argc){
         if(strcmp(av[pNum], "--help") == 0){
             fprintf(stdout, "USAGE:\n");
-            fprintf(stdout, "           RANDdna -in [database] -test [query]\n");
+            fprintf(stdout, "           RANDdna -in [database]\n");
             fprintf(stdout, "OPTIONAL:\n");
             fprintf(stdout, "           --help      Shows help for program usage\n");
             fprintf(stdout, "\n");
@@ -252,14 +281,10 @@ void init_args(int argc, char ** av, FILE ** database, FILE ** query){
             *database = fopen64(av[pNum+1], "rt");
             if(database==NULL) terror("Could not open input file");
         }
-        if(strcmp(av[pNum], "-test") == 0){
-            *query = fopen64(av[pNum+1], "rt");
-            if(query==NULL) terror("Could not open input file");
-        }
         
         pNum++;
     }
     
-    if(*database==NULL || *query==NULL) terror("An input file is required and a test is required");
+    if(*database==NULL) terror("An input file is required and a test is required");
 }
 
